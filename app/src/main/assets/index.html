@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+
+  <!-- Mobile screen support -->
+  <meta name="viewport"
+        content="width=device-width,initial-scale=1.0">
+
+  <title>HTMLHub</title>
+
+  <style>
+    *{
+      box-sizing:border-box;
+      margin:0;
+      padding:0;
+    }
+
+    body{
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:#111;
+      color:white;
+      font-family:Arial,sans-serif;
+      text-align:center;
+    }
+
+    .box{
+      width:90%;
+      max-width:400px;
+      padding:30px;
+      border-radius:20px;
+      background:#222;
+    }
+
+    h1{
+      color:#00ff88;
+      margin-bottom:15px;
+    }
+
+    p{
+      color:#ddd;
+      margin-bottom:20px;
+    }
+
+    button{
+      border:0;
+      padding:13px 25px;
+      border-radius:10px;
+      background:#00ff88;
+      color:#111;
+      font-weight:bold;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="box">
+    <h1>HTMLHub</h1>
+    <p>My first HTML → APK app</p>
+
+    <button onclick="hello()">
+      Test App
+    </button>
+  </div>
+
+  <script>
+    // Button test
+    function hello(){
+      alert("HTMLHub APK is working!");
+    }
+  </script>
+
+</body>
+</html>

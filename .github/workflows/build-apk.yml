@@ -14,12 +14,12 @@ jobs:
 
     steps:
 
-      # 1. GitHub repository checkout
+      # 1. Checkout repository
       - name: Checkout
         uses: actions/checkout@v6
 
 
-      # 2. Java 17
+      # 2. Setup Java 17
       - name: Setup Java
         uses: actions/setup-java@v6
         with:
@@ -27,12 +27,12 @@ jobs:
           java-version: "17"
 
 
-      # 3. Android SDK
+      # 3. Setup Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
 
-      # 4. Android SDK packages
+      # 4. Install Android SDK
       - name: Install Android SDK
         run: |
           sdkmanager "platform-tools" \
@@ -40,76 +40,118 @@ jobs:
             "build-tools;35.0.0"
 
 
-      # 5. Get project information from Supabase
+      # 5. Get HTML from Supabase
       - name: Get HTML from Supabase
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BUILD_ID: ${{ inputs.build_id }}
 
         run: |
 
+          # Supabase project
+          SUPABASE_URL="https://wgylobjcxqmjsutgdhdz.supabase.co"
+
+          # Supabase publishable key
+          SUPABASE_KEY="sb_publishable_IfpDVaKbbxem461SnCl9UA_LFwdNOon"
+
           echo "Getting build:"
           echo "$BUILD_ID"
 
+          # Check Build ID
+          if [ -z "$BUILD_ID" ]; then
+            echo "ERROR: Build ID is empty"
+            exit 1
+          fi
+
+          # Get build information
           curl -f \
-            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
             "$SUPABASE_URL/rest/v1/builds?id=eq.$BUILD_ID&select=app_name,package_name,html_code" \
             -o build.json
 
           echo "Supabase response:"
           cat build.json
 
+          # Read Supabase data
           python3 - <<'PY'
 
           import json
           import re
+          import os
 
-          # Read Supabase response
+          # Read response
           with open("build.json", "r", encoding="utf-8") as f:
               data = json.load(f)
 
-          # Check build
+          # Check response
           if not data:
-              raise SystemExit("ERROR: Build ID not found in Supabase")
+              raise SystemExit(
+                  "ERROR: Build ID not found in Supabase"
+              )
 
           row = data[0]
 
+          # Get values
           app_name = row.get("app_name")
           package_name = row.get("package_name")
           html_code = row.get("html_code")
 
+          # Check app name
           if not app_name:
-              raise SystemExit("ERROR: app_name is empty")
-
-          if not package_name:
-              raise SystemExit("ERROR: package_name is empty")
-
-          if not html_code:
-              raise SystemExit("ERROR: html_code is empty")
-
-          # Android package name validation
-          package_pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)+$"
-
-          if not re.match(package_pattern, package_name):
               raise SystemExit(
-                  "ERROR: Invalid Android package name: " + package_name
+                  "ERROR: app_name is empty"
+              )
+
+          # Check package
+          if not package_name:
+              raise SystemExit(
+                  "ERROR: package_name is empty"
+              )
+
+          # Check HTML
+          if not html_code:
+              raise SystemExit(
+                  "ERROR: html_code is empty"
+              )
+
+          # Validate Android package
+          package_pattern = (
+              r"^[a-zA-Z_][a-zA-Z0-9_]*"
+              r"(\.[a-zA-Z_][a-zA-Z0-9_]*)+$"
+          )
+
+          if not re.match(
+              package_pattern,
+              package_name
+          ):
+              raise SystemExit(
+                  "ERROR: Invalid Android package name: "
+                  + package_name
               )
 
           # Save app name
-          with open("app_name.txt", "w", encoding="utf-8") as f:
+          with open(
+              "app_name.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
               f.write(app_name)
 
           # Save package name
-          with open("package_name.txt", "w", encoding="utf-8") as f:
+          with open(
+              "package_name.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
               f.write(package_name)
 
-          # Create assets directory
-          import os
-          os.makedirs("app/src/main/assets", exist_ok=True)
+          # Create assets folder
+          os.makedirs(
+              "app/src/main/assets",
+              exist_ok=True
+          )
 
-          # Write user's HTML
+          # Save user's HTML
           with open(
               "app/src/main/assets/index.html",
               "w",
@@ -129,7 +171,7 @@ jobs:
           PY
 
 
-      # 6. Create Android project folders
+      # 6. Create Android folders
       - name: Create Android Project
         run: |
 
@@ -153,7 +195,9 @@ jobs:
           }
 
           dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositoriesMode.set(
+                  RepositoriesMode.FAIL_ON_PROJECT_REPOS
+              )
 
               repositories {
                   google()
@@ -168,7 +212,7 @@ jobs:
           EOF
 
 
-      # 8. Root build.gradle
+      # 8. Root Gradle
       - name: Create Root Gradle
         run: |
 
@@ -181,7 +225,7 @@ jobs:
           EOF
 
 
-      # 9. Read package name and create Android build.gradle
+      # 9. App Gradle
       - name: Create App Gradle
         run: |
 
@@ -194,15 +238,21 @@ jobs:
           }
 
           android {
+
               namespace '${PACKAGE_NAME}'
+
               compileSdk 35
 
               defaultConfig {
+
                   applicationId '${PACKAGE_NAME}'
+
                   minSdk 23
+
                   targetSdk 35
 
                   versionCode 1
+
                   versionName "1.0"
               }
           }
@@ -210,7 +260,7 @@ jobs:
           EOF
 
 
-      # 10. Create Java package folder
+      # 10. Create MainActivity
       - name: Create Java Activity
         run: |
 
@@ -232,26 +282,35 @@ jobs:
           public class MainActivity extends Activity {
 
               @Override
-              protected void onCreate(Bundle savedInstanceState) {
+              protected void onCreate(
+                  Bundle savedInstanceState
+              ) {
 
                   super.onCreate(savedInstanceState);
 
-                  WebView webView = new WebView(this);
+                  WebView webView =
+                      new WebView(this);
 
-                  WebSettings settings = webView.getSettings();
+                  WebSettings settings =
+                      webView.getSettings();
 
+                  // Enable JavaScript
                   settings.setJavaScriptEnabled(true);
 
+                  // Enable localStorage
                   settings.setDomStorageEnabled(true);
 
+                  // Allow local files
                   settings.setAllowFileAccess(true);
 
                   settings.setAllowContentAccess(true);
 
+                  // Load HTML
                   webView.loadUrl(
                       "file:///android_asset/index.html"
                   );
 
+                  // Show WebView
                   setContentView(webView);
               }
           }
@@ -264,6 +323,7 @@ jobs:
         run: |
 
           PACKAGE_NAME=$(cat package_name.txt)
+
           APP_NAME=$(cat app_name.txt)
 
           cat > app/src/main/AndroidManifest.xml <<EOF
@@ -302,7 +362,7 @@ jobs:
           EOF
 
 
-      # 12. Android theme
+      # 12. Android Theme
       - name: Create Android Theme
         run: |
 
@@ -314,11 +374,17 @@ jobs:
                   name="AppTheme"
                   parent="android:style/Theme.Material.Light.NoActionBar">
 
-                  <item name="android:fontFamily">sans</item>
+                  <item name="android:fontFamily">
+                      sans
+                  </item>
 
-                  <item name="android:colorAccent">#007DFA</item>
+                  <item name="android:colorAccent">
+                      #007DFA
+                  </item>
 
-                  <item name="android:windowLightStatusBar">false</item>
+                  <item name="android:windowLightStatusBar">
+                      false
+                  </item>
 
               </style>
 
@@ -346,14 +412,15 @@ jobs:
           gradle assembleDebug
 
 
-      # 15. Show APK
+      # 15. Check APK
       - name: Check APK
         run: |
 
-          ls -lh app/build/outputs/apk/debug/
+          ls -lh \
+            app/build/outputs/apk/debug/
 
 
-      # 16. Upload APK to GitHub Artifact
+      # 16. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v6
         with:

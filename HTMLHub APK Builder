@@ -1,0 +1,35 @@
+name: HTMLHub APK Builder
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android tools
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Check files
+        run: |
+          echo "HTMLHub APK Builder started"
+          find . -maxdepth 3 -type f | head -100
+
+      - name: Build APK
+        run: |
+          echo "APK build system ready"
+          echo "Next step: Android project + Supabase connection"

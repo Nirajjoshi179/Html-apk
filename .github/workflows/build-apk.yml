@@ -1,39 +1,149 @@
 name: HTMLHub APK Builder
+
 on:
   workflow_dispatch:
     inputs:
       build_id:
-        description: 'Supabase Build ID'
+        description: "Supabase Build ID"
         required: true
-        type: string 
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+
+      # 1. GitHub repository checkout
       - name: Checkout
         uses: actions/checkout@v6
 
+
+      # 2. Java 17
       - name: Setup Java
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
+
+      # 3. Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
+
+      # 4. Android SDK packages
       - name: Install Android SDK
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
+
+      # 5. Get project information from Supabase
+      - name: Get HTML from Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BUILD_ID: ${{ inputs.build_id }}
+
+        run: |
+
+          echo "Getting build:"
+          echo "$BUILD_ID"
+
+          curl -f \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            "$SUPABASE_URL/rest/v1/builds?id=eq.$BUILD_ID&select=app_name,package_name,html_code" \
+            -o build.json
+
+          echo "Supabase response:"
+          cat build.json
+
+          python3 - <<'PY'
+
+          import json
+          import re
+
+          # Read Supabase response
+          with open("build.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          # Check build
+          if not data:
+              raise SystemExit("ERROR: Build ID not found in Supabase")
+
+          row = data[0]
+
+          app_name = row.get("app_name")
+          package_name = row.get("package_name")
+          html_code = row.get("html_code")
+
+          if not app_name:
+              raise SystemExit("ERROR: app_name is empty")
+
+          if not package_name:
+              raise SystemExit("ERROR: package_name is empty")
+
+          if not html_code:
+              raise SystemExit("ERROR: html_code is empty")
+
+          # Android package name validation
+          package_pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)+$"
+
+          if not re.match(package_pattern, package_name):
+              raise SystemExit(
+                  "ERROR: Invalid Android package name: " + package_name
+              )
+
+          # Save app name
+          with open("app_name.txt", "w", encoding="utf-8") as f:
+              f.write(app_name)
+
+          # Save package name
+          with open("package_name.txt", "w", encoding="utf-8") as f:
+              f.write(package_name)
+
+          # Create assets directory
+          import os
+          os.makedirs("app/src/main/assets", exist_ok=True)
+
+          # Write user's HTML
+          with open(
+              "app/src/main/assets/index.html",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              f.write(html_code)
+
+          print("")
+          print("================================")
+          print("HTMLHub Build Information")
+          print("================================")
+          print("App Name:", app_name)
+          print("Package:", package_name)
+          print("HTML loaded successfully")
+          print("================================")
+
+          PY
+
+
+      # 6. Create Android project folders
       - name: Create Android Project
         run: |
+
           mkdir -p app/src/main/java/com/htmlhub/app
+          mkdir -p app/src/main/res/values
           mkdir -p app/src/main/assets
 
+
+      # 7. Create Gradle settings
+      - name: Create Gradle Settings
+        run: |
+
           cat > settings.gradle <<'EOF'
+
           pluginManagement {
               repositories {
                   google()
@@ -44,6 +154,7 @@ jobs:
 
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+
               repositories {
                   google()
                   mavenCentral()
@@ -51,50 +162,135 @@ jobs:
           }
 
           rootProject.name = "HTMLHub"
+
           include ":app"
+
           EOF
+
+
+      # 8. Root build.gradle
+      - name: Create Root Gradle
+        run: |
 
           cat > build.gradle <<'EOF'
+
           plugins {
-            id 'com.android.application' version '8.6.1' apply false
+              id 'com.android.application' version '8.6.1' apply false
           }
+
           EOF
 
-          cat > app/build.gradle <<'EOF'
+
+      # 9. Read package name and create Android build.gradle
+      - name: Create App Gradle
+        run: |
+
+          PACKAGE_NAME=$(cat package_name.txt)
+
+          cat > app/build.gradle <<EOF
+
           plugins {
               id 'com.android.application'
           }
 
           android {
-              namespace 'com.htmlhub.app'
+              namespace '${PACKAGE_NAME}'
               compileSdk 35
 
               defaultConfig {
-                  applicationId 'com.htmlhub.app'
+                  applicationId '${PACKAGE_NAME}'
                   minSdk 23
                   targetSdk 35
+
                   versionCode 1
                   versionName "1.0"
               }
           }
+
           EOF
 
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-              <uses-permission android:name="android.permission.INTERNET"/>
+      # 10. Create Java package folder
+      - name: Create Java Activity
+        run: |
+
+          PACKAGE_NAME=$(cat package_name.txt)
+
+          JAVA_PATH=$(echo "$PACKAGE_NAME" | tr '.' '/')
+
+          mkdir -p "app/src/main/java/$JAVA_PATH"
+
+          cat > "app/src/main/java/$JAVA_PATH/MainActivity.java" <<EOF
+
+          package ${PACKAGE_NAME};
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+
+          public class MainActivity extends Activity {
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+
+                  super.onCreate(savedInstanceState);
+
+                  WebView webView = new WebView(this);
+
+                  WebSettings settings = webView.getSettings();
+
+                  settings.setJavaScriptEnabled(true);
+
+                  settings.setDomStorageEnabled(true);
+
+                  settings.setAllowFileAccess(true);
+
+                  settings.setAllowContentAccess(true);
+
+                  webView.loadUrl(
+                      "file:///android_asset/index.html"
+                  );
+
+                  setContentView(webView);
+              }
+          }
+
+          EOF
+
+
+      # 11. Android Manifest
+      - name: Create Android Manifest
+        run: |
+
+          PACKAGE_NAME=$(cat package_name.txt)
+          APP_NAME=$(cat app_name.txt)
+
+          cat > app/src/main/AndroidManifest.xml <<EOF
+
+          <manifest
+              xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission
+                  android:name="android.permission.INTERNET" />
 
               <application
                   android:theme="@style/AppTheme"
-                  android:label="HTMLHub">
+                  android:label="$APP_NAME"
+                  android:usesCleartextTraffic="true">
 
                   <activity
-                      android:name=".MainActivity"
+                      android:name="${PACKAGE_NAME}.MainActivity"
                       android:exported="true">
 
                       <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
+
+                          <action
+                              android:name="android.intent.action.MAIN" />
+
+                          <category
+                              android:name="android.intent.category.LAUNCHER" />
+
                       </intent-filter>
 
                   </activity>
@@ -102,115 +298,62 @@ jobs:
               </application>
 
           </manifest>
+
           EOF
 
-          mkdir -p app/src/main/res/values
+
+      # 12. Android theme
+      - name: Create Android Theme
+        run: |
 
           cat > app/src/main/res/values/styles.xml <<'EOF'
+
           <resources>
-              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+
+              <style
+                  name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+
                   <item name="android:fontFamily">sans</item>
+
                   <item name="android:colorAccent">#007DFA</item>
+
+                  <item name="android:windowLightStatusBar">false</item>
+
               </style>
+
           </resources>
+
           EOF
 
-          cat > app/src/main/java/com/htmlhub/app/MainActivity.java <<'EOF'
-          package com.htmlhub.app;
 
-          import android.app.Activity;
-          import android.os.Bundle;
-          import android.webkit.WebView;
-          import android.webkit.WebSettings;
-
-          public class MainActivity extends Activity {
-
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-
-                  WebView webView = new WebView(this);
-
-                  WebSettings settings = webView.getSettings();
-                  settings.setJavaScriptEnabled(true);
-                  settings.setDomStorageEnabled(true);
-
-                  webView.loadUrl("file:///android_asset/index.html");
-
-                  setContentView(webView);
-              }
-          }
-          EOF
-
-          cat > app/src/main/assets/index.html <<'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head>
-              <meta name="viewport"
-                    content="width=device-width, initial-scale=1.0">
-
-              <title>HTMLHub</title>
-
-              <style>
-                  body {
-                      margin: 0;
-                      font-family: Arial;
-                      background: #111;
-                      color: white;
-                      display: flex;
-                      align-items: center;
-                      justify-content: center;
-                      height: 100vh;
-                      text-align: center;
-                  }
-
-                  .box {
-                      padding: 30px;
-                  }
-
-                  h1 {
-                      color: #007DFA;
-                  }
-
-                  button {
-                      padding: 14px 25px;
-                      border: 0;
-                      border-radius: 10px;
-                      background: #007DFA;
-                      color: white;
-                      font-size: 16px;
-                  }
-              </style>
-          </head>
-
-          <body>
-
-              <div class="box">
-                  <h1>HTMLHub</h1>
-                  <p>APK successfully created!</p>
-                  <button onclick="hello()">Test App</button>
-              </div>
-
-              <script>
-                  function hello() {
-                      alert("HTMLHub APK is working!");
-                  }
-              </script>
-
-          </body>
-          </html>
-          EOF
-
+      # 13. Download Gradle 8.7
       - name: Download Gradle
         run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
+
+          wget -q \
+            https://services.gradle.org/distributions/gradle-8.7-bin.zip
+
           unzip -q gradle-8.7-bin.zip
+
           echo "$PWD/gradle-8.7/bin" >> $GITHUB_PATH
 
+
+      # 14. Build APK
       - name: Build APK
         run: |
+
           gradle assembleDebug
 
+
+      # 15. Show APK
+      - name: Check APK
+        run: |
+
+          ls -lh app/build/outputs/apk/debug/
+
+
+      # 16. Upload APK to GitHub Artifact
       - name: Upload APK
         uses: actions/upload-artifact@v6
         with:

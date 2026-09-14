@@ -1,7 +1,11 @@
 name: HTMLHub APK Builder
-
 on:
   workflow_dispatch:
+    inputs:
+      build_id:
+        description: 'Supabase Build ID'
+        required: true
+        type: string 
 
 jobs:
   build:

@@ -13,44 +13,165 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repository
+
+      # ==========================================
+      # 1. Checkout
+      # ==========================================
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Setup Java 17 (Updated to @v5)
+
+      # ==========================================
+      # 2. Java 17
+      # ==========================================
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      # 3. Setup Android SDK (PATH fixed)
+
+      # ==========================================
+      # 3. Find Android SDK
+      # ==========================================
       - name: Setup Android SDK
+        shell: bash
         run: |
-          export PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/tools/bin:${PATH}"
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+          if [ -z "$ANDROID_HOME" ]; then
+            export ANDROID_HOME="/usr/local/lib/android/sdk"
+          fi
+
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+
+          echo "Using Android SDK:"
+          echo "$ANDROID_HOME"
+
+
+          # Find sdkmanager
+          SDKMANAGER=""
+
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          elif [ -x "$ANDROID_HOME/cmdline-tools/20.0/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/20.0/bin/sdkmanager"
+
+          elif [ -x "$ANDROID_HOME/cmdline-tools/12.0/bin/sdkmanager" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/12.0/bin/sdkmanager"
+
+          else
+            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+              -name sdkmanager \
+              -type f \
+              2>/dev/null | head -n 1)
+          fi
+
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
+            echo "Searching Android SDK..."
+
+            find "$ANDROID_HOME" \
+              -name sdkmanager \
+              -type f \
+              2>/dev/null || true
+
+            exit 1
+          fi
+
+
+          echo "sdkmanager found:"
+          echo "$SDKMANAGER"
+
+
+          SDKMANAGER_DIR=$(dirname "$SDKMANAGER")
+
+          echo "$SDKMANAGER_DIR" >> "$GITHUB_PATH"
+
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+
+          # Save variables for later steps
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+          echo "Android SDK path configured."
+
+
+      # ==========================================
+      # 4. Accept licenses + install SDK
+      # ==========================================
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+
+          echo "Checking sdkmanager..."
+
+          which sdkmanager || true
+
+          sdkmanager --version
+
+
+          echo "Accepting Android SDK licenses..."
+
           yes | sdkmanager --licenses > /dev/null || true
+
+
+          echo "Installing required packages..."
+
           sdkmanager \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
-          echo "Android SDK ready"
 
-      # 4. Get HTML from Supabase
+
+          echo "================================"
+          echo "Android SDK ready"
+          echo "================================"
+
+          sdkmanager --list_installed | head -n 50
+
+
+      # ==========================================
+      # 5. Get HTML from Supabase
+      # ==========================================
       - name: Get HTML from Supabase
         env:
           BUILD_ID: ${{ inputs.build_id }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        shell: bash
         run: |
+
           echo "================================"
-          echo "Getting Build"
+          echo "HTMLHub Build"
           echo "================================"
-          echo "Build ID: $BUILD_ID"
+
+          echo "Build ID:"
+          echo "$BUILD_ID"
+
 
           if [ -z "$BUILD_ID" ]; then
             echo "ERROR: Build ID is empty"
             exit 1
           fi
+
+
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "ERROR: SUPABASE_URL secret is missing"
+            exit 1
+          fi
+
+
+          if [ -z "$SUPABASE_KEY" ]; then
+            echo "ERROR: SUPABASE_SERVICE_ROLE_KEY secret is missing"
+            exit 1
+          fi
+
 
           HTTP_CODE=$(curl -sS \
             -o build.json \
@@ -59,13 +180,23 @@ jobs:
             -H "Authorization: Bearer $SUPABASE_KEY" \
             "$SUPABASE_URL/rest/v1/builds?id=eq.$BUILD_ID&select=app_name,package_name,html_code")
 
-          echo "HTTP Status: $HTTP_CODE"
+
+          echo "HTTP Status:"
+          echo "$HTTP_CODE"
+
+
+          echo "Supabase response:"
           cat build.json
+
+
+          echo ""
+
 
           if [ "$HTTP_CODE" != "200" ]; then
             echo "ERROR: Supabase request failed"
             exit 1
           fi
+
 
           python3 - <<'PY'
           import json
@@ -74,43 +205,125 @@ jobs:
           import sys
           import xml.sax.saxutils as saxutils
 
-          with open("build.json", "r", encoding="utf-8") as f:
+
+          with open(
+              "build.json",
+              "r",
+              encoding="utf-8"
+          ) as f:
               data = json.load(f)
+
 
           if not data:
               print("ERROR: Build ID not found in Supabase")
               sys.exit(1)
 
+
           row = data[0]
+
+
           app_name = row.get("app_name")
           package_name = row.get("package_name")
           html_code = row.get("html_code")
 
-          if not app_name or not package_name or not html_code:
-              print("ERROR: Missing required app fields")
+
+          if not app_name:
+              print("ERROR: app_name is empty")
               sys.exit(1)
 
-          package_pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)+$"
-          if not re.match(package_pattern, package_name):
-              print("ERROR: Invalid Android package name:", package_name)
+
+          if not package_name:
+              print("ERROR: package_name is empty")
               sys.exit(1)
 
-          with open("app_name.txt", "w", encoding="utf-8") as f:
+
+          if not html_code:
+              print("ERROR: html_code is empty")
+              sys.exit(1)
+
+
+          package_pattern = (
+              r"^[a-zA-Z_][a-zA-Z0-9_]*"
+              r"(\.[a-zA-Z_][a-zA-Z0-9_]*)+$"
+          )
+
+
+          if not re.match(
+              package_pattern,
+              package_name
+          ):
+              print(
+                  "ERROR: Invalid Android package name:",
+                  package_name
+              )
+              sys.exit(1)
+
+
+          # Save app name
+          with open(
+              "app_name.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
               f.write(app_name)
 
-          with open("package_name.txt", "w", encoding="utf-8") as f:
+
+          # Save package name
+          with open(
+              "package_name.txt",
+              "w",
+              encoding="utf-8"
+          ) as f:
               f.write(package_name)
 
-          os.makedirs("app/src/main/assets", exist_ok=True)
-          with open("app/src/main/assets/index.html", "w", encoding="utf-8") as f:
+
+          # Create HTML asset folder
+          os.makedirs(
+              "app/src/main/assets",
+              exist_ok=True
+          )
+
+
+          # Save HTML
+          with open(
+              "app/src/main/assets/index.html",
+              "w",
+              encoding="utf-8"
+          ) as f:
               f.write(html_code)
 
-          os.makedirs("app/src/main/res/values", exist_ok=True)
-          safe_app_name = saxutils.escape(app_name)
-          with open("app/src/main/res/values/strings.xml", "w", encoding="utf-8") as f:
-              f.write(f'<resources><string name="app_name">{safe_app_name}</string></resources>')
 
-          print("\n================================")
+          # Create Android values folder
+          os.makedirs(
+              "app/src/main/res/values",
+              exist_ok=True
+          )
+
+
+          # Escape app name for XML
+          safe_app_name = saxutils.escape(
+              app_name
+          )
+
+
+          # Create strings.xml
+          with open(
+              "app/src/main/res/values/strings.xml",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              f.write(
+                  "<resources>"
+                  f"<string name=\"app_name\">"
+                  f"{safe_app_name}"
+                  "</string>"
+                  "</resources>"
+              )
+
+
+          print("")
+          print("================================")
           print("HTMLHub Build Information")
           print("================================")
           print("App Name:", app_name)
@@ -119,14 +332,22 @@ jobs:
           print("================================")
           PY
 
-      # 5. Create Android Project Folders
+
+      # ==========================================
+      # 6. Create Android folders
+      # ==========================================
       - name: Create Android Project
         run: |
+
           mkdir -p app/src/main/res/values
 
-      # 6. Create Gradle Settings
+
+      # ==========================================
+      # 7. Gradle Settings
+      # ==========================================
       - name: Create Gradle Settings
         run: |
+
           cat > settings.gradle <<'EOF'
           pluginManagement {
               repositories {
@@ -137,7 +358,10 @@ jobs:
           }
 
           dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositoriesMode.set(
+                  RepositoriesMode.FAIL_ON_PROJECT_REPOS
+              )
+
               repositories {
                   google()
                   mavenCentral()
@@ -145,22 +369,33 @@ jobs:
           }
 
           rootProject.name = "HTMLHub"
+
           include ":app"
           EOF
 
-      # 7. Create Root Gradle
+
+      # ==========================================
+      # 8. Root Gradle
+      # ==========================================
       - name: Create Root Gradle
         run: |
+
           cat > build.gradle <<'EOF'
           plugins {
               id 'com.android.application' version '8.6.1' apply false
           }
           EOF
 
-      # 8. Create App Gradle
+
+      # ==========================================
+      # 9. App Gradle
+      # ==========================================
       - name: Create App Gradle
+        shell: bash
         run: |
+
           PACKAGE_NAME=$(cat package_name.txt)
+
 
           cat > app/build.gradle <<EOF
           plugins {
@@ -169,27 +404,44 @@ jobs:
 
           android {
               namespace '${PACKAGE_NAME}'
+
               compileSdk 35
 
               defaultConfig {
                   applicationId '${PACKAGE_NAME}'
+
                   minSdk 23
+
                   targetSdk 35
+
                   versionCode 1
+
                   versionName "1.0"
               }
           }
           EOF
 
-      # 9. Create MainActivity
+
+      # ==========================================
+      # 10. MainActivity
+      # ==========================================
       - name: Create MainActivity
+        shell: bash
         run: |
+
           PACKAGE_NAME=$(cat package_name.txt)
+
           JAVA_PATH=$(echo "$PACKAGE_NAME" | tr '.' '/')
 
-          mkdir -p "app/src/main/java/$JAVA_PATH"
 
-          cat > "app/src/main/java/$JAVA_PATH/MainActivity.java" <<EOF
+          mkdir -p \
+            "app/src/main/java/$JAVA_PATH"
+
+
+          cat > \
+            "app/src/main/java/$JAVA_PATH/MainActivity.java" \
+            <<EOF
+
           package ${PACKAGE_NAME};
 
           import android.app.Activity;
@@ -199,35 +451,65 @@ jobs:
           import android.webkit.WebViewClient;
 
           public class MainActivity extends Activity {
+
               @Override
-              protected void onCreate(Bundle savedInstanceState) {
+              protected void onCreate(
+                  Bundle savedInstanceState
+              ) {
+
                   super.onCreate(savedInstanceState);
 
-                  WebView webView = new WebView(this);
-                  WebSettings settings = webView.getSettings();
+                  WebView webView =
+                      new WebView(this);
 
+                  WebSettings settings =
+                      webView.getSettings();
+
+                  // Enable JavaScript
                   settings.setJavaScriptEnabled(true);
+
+                  // Enable localStorage
                   settings.setDomStorageEnabled(true);
+
+                  // Allow local files
                   settings.setAllowFileAccess(true);
+
                   settings.setAllowContentAccess(true);
 
-                  webView.setWebViewClient(new WebViewClient());
-                  webView.loadUrl("file:///android_asset/index.html");
+                  // Keep links inside WebView
+                  webView.setWebViewClient(
+                      new WebViewClient()
+                  );
+
+                  // Load HTML
+                  webView.loadUrl(
+                      "file:///android_asset/index.html"
+                  );
 
                   setContentView(webView);
               }
           }
+
           EOF
 
-      # 10. Create Android Manifest
+
+      # ==========================================
+      # 11. Android Manifest
+      # ==========================================
       - name: Create Android Manifest
+        shell: bash
         run: |
+
           PACKAGE_NAME=$(cat package_name.txt)
 
-          cat > app/src/main/AndroidManifest.xml <<EOF
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-              <uses-permission android:name="android.permission.INTERNET" />
+          cat > app/src/main/AndroidManifest.xml <<EOF
+
+          <manifest
+              xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission
+                  android:name="android.permission.INTERNET" />
 
               <application
                   android:theme="@style/AppTheme"
@@ -237,62 +519,149 @@ jobs:
                   <activity
                       android:name="${PACKAGE_NAME}.MainActivity"
                       android:exported="true">
+
                       <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
+
+                          <action
+                              android:name="android.intent.action.MAIN" />
+
+                          <category
+                              android:name="android.intent.category.LAUNCHER" />
+
                       </intent-filter>
+
                   </activity>
 
               </application>
 
           </manifest>
+
           EOF
 
-      # 11. Create Android Theme
+
+      # ==========================================
+      # 12. Android Theme
+      # ==========================================
       - name: Create Android Theme
         run: |
+
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <resources>
-              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
-                  <item name="android:fontFamily">sans</item>
-                  <item name="android:colorAccent">#007DFA</item>
-                  <item name="android:windowLightStatusBar">false</item>
+
+              <style
+                  name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+
+                  <item name="android:fontFamily">
+                      sans
+                  </item>
+
+                  <item name="android:colorAccent">
+                      #007DFA
+                  </item>
+
+                  <item name="android:windowLightStatusBar">
+                      false
+                  </item>
+
               </style>
+
           </resources>
           EOF
 
-      # 12. Download Gradle 8.7
+
+      # ==========================================
+      # 13. Download Gradle 8.7
+      # ==========================================
       - name: Download Gradle
+        shell: bash
         run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
-          unzip -q gradle-8.7-bin.zip
-          echo "$PWD/gradle-8.7/bin" >> $GITHUB_PATH
 
-      # 13. Build APK
+          wget -q \
+            https://services.gradle.org/distributions/gradle-8.7-bin.zip
+
+
+          unzip -q \
+            gradle-8.7-bin.zip
+
+
+          echo "$PWD/gradle-8.7/bin" \
+            >> "$GITHUB_PATH"
+
+
+      # ==========================================
+      # 14. Verify Gradle
+      # ==========================================
+      - name: Verify Gradle
+        shell: bash
+        run: |
+
+          echo "Checking Gradle..."
+
+          ./gradle-8.7/bin/gradle --version
+
+
+      # ==========================================
+      # 15. Build APK
+      # ==========================================
       - name: Build APK
+        shell: bash
         run: |
-          gradle assembleDebug
 
-      # 14. Check APK Output
+          echo "================================"
+          echo "Building APK"
+          echo "================================"
+
+          ./gradle-8.7/bin/gradle \
+            assembleDebug \
+            --no-daemon \
+            --stacktrace
+
+
+      # ==========================================
+      # 16. Check APK
+      # ==========================================
       - name: Check APK
+        shell: bash
         run: |
-          echo "APK files:"
-          ls -lh app/build/outputs/apk/debug/
 
-      # 15. Upload APK to Supabase Storage
+          echo "================================"
+          echo "APK OUTPUT"
+          echo "================================"
+
+          ls -lh \
+            app/build/outputs/apk/debug/
+
+          test -f \
+            app/build/outputs/apk/debug/app-debug.apk
+
+          echo ""
+          echo "APK created successfully!"
+
+
+      # ==========================================
+      # 17. Upload APK to Supabase Storage
+      # ==========================================
       - name: Upload APK to Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BUILD_ID: ${{ inputs.build_id }}
+        shell: bash
         run: |
+
           APK="app/build/outputs/apk/debug/app-debug.apk"
+
           FILE_PATH="apk-files/${BUILD_ID}.apk"
+
 
           echo "================================"
           echo "Uploading APK"
           echo "================================"
-          echo "Path: $FILE_PATH"
+
+          echo "Path:"
+          echo "$FILE_PATH"
+
 
           HTTP_CODE=$(curl -sS \
             -o upload-response.txt \
@@ -304,52 +673,114 @@ jobs:
             --data-binary "@$APK" \
             "$SUPABASE_URL/storage/v1/object/$FILE_PATH")
 
-          echo "HTTP Status: $HTTP_CODE"
+
+          echo "HTTP Status:"
+          echo "$HTTP_CODE"
+
+
+          echo "Response:"
           cat upload-response.txt
 
-          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
-            echo "ERROR: APK upload failed"
-            exit 1
+
+          if [ "$HTTP_CODE" != "200" ] &&
+             [ "$HTTP_CODE" != "201" ]; then
+
+              echo "ERROR: APK upload failed"
+
+              exit 1
           fi
 
+
+          echo ""
           echo "APK uploaded successfully!"
 
-      # 16. Create APK URL
+
+      # ==========================================
+      # 18. Create APK URL
+      # ==========================================
       - name: Create APK URL
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           BUILD_ID: ${{ inputs.build_id }}
+        shell: bash
         run: |
+
           APK_URL="$SUPABASE_URL/storage/v1/object/public/apk-files/$BUILD_ID.apk"
+
+
           echo "================================"
-          echo "APK URL: $APK_URL"
+          echo "APK URL"
           echo "================================"
+
+          echo "$APK_URL"
+
+
           echo "$APK_URL" > apk_url.txt
 
-      # 17. Update Supabase Build Status
+
+      # ==========================================
+      # 19. Update Supabase Build
+      # ==========================================
       - name: Update Supabase Build
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BUILD_ID: ${{ inputs.build_id }}
+        shell: bash
         run: |
-          APK_URL=$(cat apk_url.txt)
-          echo "Updating Supabase build..."
 
-          RESPONSE=$(curl -sS \
-            -w "\n%{http_code}" \
+          APK_URL=$(cat apk_url.txt)
+
+          COMPLETED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+
+          echo "================================"
+          echo "Updating Supabase"
+          echo "================================"
+
+          echo "Build ID:"
+          echo "$BUILD_ID"
+
+          echo "Status:"
+          echo "completed"
+
+
+          HTTP_CODE=$(curl -sS \
+            -o update-response.txt \
+            -w "%{http_code}" \
             -X PATCH \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
-            -d "{\"apk_url\":\"$APK_URL\",\"status\":\"completed\",\"completed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+            -d "{\"apk_url\":\"$APK_URL\",\"status\":\"completed\",\"completed_at\":\"$COMPLETED_AT\"}" \
             "$SUPABASE_URL/rest/v1/builds?id=eq.$BUILD_ID")
 
-          echo "$RESPONSE"
+
+          echo "HTTP Status:"
+          echo "$HTTP_CODE"
+
+
+          echo "Response:"
+          cat update-response.txt
+
+
+          if [ "$HTTP_CODE" != "200" ] &&
+             [ "$HTTP_CODE" != "204" ]; then
+
+              echo "ERROR: Database update failed"
+
+              exit 1
+          fi
+
+
+          echo ""
           echo "Database updated successfully!"
 
-      # 18. Upload APK Artifact
+
+      # ==========================================
+      # 20. Upload APK Artifact
+      # ==========================================
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:

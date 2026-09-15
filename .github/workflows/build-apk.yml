@@ -30,14 +30,24 @@ jobs:
       # 3. Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
-        with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
 
 
-      # 4. Get HTML from Supabase
+      # 4. Install Android SDK packages
+      - name: Install Android SDK packages
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+          echo "Android SDK ready"
+
+
+      # 5. Get HTML from Supabase
       - name: Get HTML from Supabase
         env:
           BUILD_ID: ${{ inputs.build_id }}
@@ -59,8 +69,6 @@ jobs:
             exit 1
           fi
 
-
-          # Get build data
           HTTP_CODE=$(curl -sS \
             -o build.json \
             -w "%{http_code}" \
@@ -73,14 +81,11 @@ jobs:
           echo "Supabase response:"
           cat build.json
 
-
           if [ "$HTTP_CODE" != "200" ]; then
             echo "ERROR: Supabase request failed"
             exit 1
           fi
 
-
-          # Read JSON
           python3 - <<'PY'
           import json
           import re
@@ -148,13 +153,13 @@ jobs:
           PY
 
 
-      # 5. Create Android folders
+      # 6. Create Android Project folders
       - name: Create Android Project
         run: |
           mkdir -p app/src/main/res/values
 
 
-      # 6. Gradle settings
+      # 7. Gradle Settings
       - name: Create Gradle Settings
         run: |
 
@@ -184,7 +189,7 @@ jobs:
           EOF
 
 
-      # 7. Root Gradle
+      # 8. Root Gradle
       - name: Create Root Gradle
         run: |
 
@@ -195,7 +200,7 @@ jobs:
           EOF
 
 
-      # 8. App Gradle
+      # 9. App Gradle
       - name: Create App Gradle
         run: |
 
@@ -226,7 +231,7 @@ jobs:
           EOF
 
 
-      # 9. MainActivity
+      # 10. MainActivity
       - name: Create MainActivity
         run: |
 
@@ -254,7 +259,8 @@ jobs:
 
                   WebView webView = new WebView(this);
 
-                  WebSettings settings = webView.getSettings();
+                  WebSettings settings =
+                      webView.getSettings();
 
                   // Enable JavaScript
                   settings.setJavaScriptEnabled(true);
@@ -267,12 +273,12 @@ jobs:
 
                   settings.setAllowContentAccess(true);
 
-                  // Keep links inside WebView
+                  // Keep navigation inside WebView
                   webView.setWebViewClient(
                       new WebViewClient()
                   );
 
-                  // Load HTMLHub HTML
+                  // Load uploaded HTML
                   webView.loadUrl(
                       "file:///android_asset/index.html"
                   );
@@ -283,7 +289,7 @@ jobs:
           EOF
 
 
-      # 10. Android Manifest
+      # 11. Android Manifest
       - name: Create Android Manifest
         run: |
 
@@ -325,7 +331,7 @@ jobs:
           EOF
 
 
-      # 11. Android Theme
+      # 12. Android Theme
       - name: Create Android Theme
         run: |
 
@@ -354,7 +360,7 @@ jobs:
           EOF
 
 
-      # 12. Download Gradle 8.7
+      # 13. Download Gradle 8.7
       - name: Download Gradle
         run: |
 
@@ -366,24 +372,26 @@ jobs:
           echo "$PWD/gradle-8.7/bin" >> $GITHUB_PATH
 
 
-      # 13. Build APK
+      # 14. Build APK
       - name: Build APK
         run: |
 
           gradle assembleDebug
 
 
-      # 14. Check APK
+      # 15. Check APK
       - name: Check APK
         run: |
 
-          echo "APK files:"
+          echo "================================"
+          echo "APK FILE"
+          echo "================================"
 
           ls -lh \
             app/build/outputs/apk/debug/
 
 
-      # 15. Upload APK to Supabase Storage
+      # 16. Upload APK to Supabase Storage
       - name: Upload APK to Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -396,12 +404,11 @@ jobs:
           FILE_PATH="apk-files/${BUILD_ID}.apk"
 
           echo "================================"
-          echo "Uploading APK"
+          echo "Uploading APK to Supabase"
           echo "================================"
 
-          echo "Path:"
+          echo "File:"
           echo "$FILE_PATH"
-
 
           HTTP_CODE=$(curl -sS \
             -o upload-response.txt \
@@ -413,13 +420,11 @@ jobs:
             --data-binary "@$APK" \
             "$SUPABASE_URL/storage/v1/object/$FILE_PATH")
 
-
           echo "HTTP Status:"
           echo "$HTTP_CODE"
 
-          echo "Supabase response:"
+          echo "Response:"
           cat upload-response.txt
-
 
           if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
             echo "ERROR: APK upload failed"
@@ -429,7 +434,7 @@ jobs:
           echo "APK uploaded successfully!"
 
 
-      # 16. Create APK URL
+      # 17. Create APK URL
       - name: Create APK URL
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -447,7 +452,7 @@ jobs:
           echo "$APK_URL" > apk_url.txt
 
 
-      # 17. Update builds table
+      # 18. Update Supabase builds table
       - name: Update Supabase Build
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -457,24 +462,37 @@ jobs:
 
           APK_URL=$(cat apk_url.txt)
 
-          echo "Updating Supabase build..."
+          COMPLETED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          RESPONSE=$(curl -sS \
-            -w "\n%{http_code}" \
+          echo "Updating build..."
+          echo "Build ID: $BUILD_ID"
+          echo "Status: completed"
+
+          HTTP_CODE=$(curl -sS \
+            -o update-response.txt \
+            -w "%{http_code}" \
             -X PATCH \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
-            -d "{\"apk_url\":\"$APK_URL\",\"status\":\"completed\",\"completed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+            -d "{\"apk_url\":\"$APK_URL\",\"status\":\"completed\",\"completed_at\":\"$COMPLETED_AT\"}" \
             "$SUPABASE_URL/rest/v1/builds?id=eq.$BUILD_ID")
 
-          echo "$RESPONSE"
+          echo "HTTP Status:"
+          echo "$HTTP_CODE"
+
+          cat update-response.txt
+
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "204" ]; then
+            echo "ERROR: Database update failed"
+            exit 1
+          fi
 
           echo "Database updated successfully!"
 
 
-      # 18. Upload APK artifact
+      # 19. Upload APK artifact
       - name: Upload APK
         uses: actions/upload-artifact@v6
         with:

@@ -30,37 +30,28 @@ jobs:
       # 3. Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
 
 
-      # 4. Install Android SDK packages
-      - name: Install Android SDK
-        run: |
-          sdkmanager "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-
-      # 5. Get HTML from Supabase
+      # 4. Get HTML from Supabase
       - name: Get HTML from Supabase
         env:
           BUILD_ID: ${{ inputs.build_id }}
-
         run: |
-
-          # ==============================
-          # SUPABASE CONFIG
-          # ==============================
 
           SUPABASE_URL="https://wgylobjcxqmjsutgdhdz.supabase.co"
 
           SUPABASE_KEY="sb_publishable_IfpDVaKbbxem461SnCl9UA_LFwdNOon"
 
+          echo "================================"
+          echo "Getting Build"
+          echo "================================"
 
-          # ==============================
-          # CHECK BUILD ID
-          # ==============================
-
-          echo "Getting build:"
+          echo "Build ID:"
           echo "$BUILD_ID"
 
           if [ -z "$BUILD_ID" ]; then
@@ -69,10 +60,7 @@ jobs:
           fi
 
 
-          # ==============================
-          # GET BUILD FROM SUPABASE
-          # ==============================
-
+          # Get build data
           HTTP_CODE=$(curl -sS \
             -o build.json \
             -w "%{http_code}" \
@@ -86,147 +74,61 @@ jobs:
           cat build.json
 
 
-          # ==============================
-          # CHECK HTTP RESPONSE
-          # ==============================
-
           if [ "$HTTP_CODE" != "200" ]; then
-            echo ""
             echo "ERROR: Supabase request failed"
             exit 1
           fi
 
 
-          # ==============================
-          # READ BUILD DATA
-          # ==============================
-
+          # Read JSON
           python3 - <<'PY'
-
           import json
           import re
           import os
           import sys
 
-          # Read Supabase response
-          with open(
-              "build.json",
-              "r",
-              encoding="utf-8"
-          ) as f:
+          with open("build.json", "r", encoding="utf-8") as f:
               data = json.load(f)
 
-
-          # Check Build ID
           if not data:
-              print("")
               print("ERROR: Build ID not found in Supabase")
-              print("")
               sys.exit(1)
 
-
-          # Get first row
           row = data[0]
 
-
-          # Get app name
           app_name = row.get("app_name")
-
-
-          # Get package name
           package_name = row.get("package_name")
-
-
-          # Get HTML
           html_code = row.get("html_code")
-
-
-          # ==============================
-          # VALIDATE APP NAME
-          # ==============================
 
           if not app_name:
               print("ERROR: app_name is empty")
               sys.exit(1)
 
-
-          # ==============================
-          # VALIDATE PACKAGE NAME
-          # ==============================
-
           if not package_name:
               print("ERROR: package_name is empty")
               sys.exit(1)
 
-
-          # ==============================
-          # VALIDATE HTML
-          # ==============================
-
           if not html_code:
               print("ERROR: html_code is empty")
               sys.exit(1)
-
-
-          # ==============================
-          # ANDROID PACKAGE VALIDATION
-          # ==============================
 
           package_pattern = (
               r"^[a-zA-Z_][a-zA-Z0-9_]*"
               r"(\.[a-zA-Z_][a-zA-Z0-9_]*)+$"
           )
 
-          if not re.match(
-              package_pattern,
-              package_name
-          ):
-              print(
-                  "ERROR: Invalid Android package name:"
-              )
-
+          if not re.match(package_pattern, package_name):
+              print("ERROR: Invalid Android package name")
               print(package_name)
-
               sys.exit(1)
 
-
-          # ==============================
-          # SAVE APP NAME
-          # ==============================
-
-          with open(
-              "app_name.txt",
-              "w",
-              encoding="utf-8"
-          ) as f:
+          with open("app_name.txt", "w", encoding="utf-8") as f:
               f.write(app_name)
 
-
-          # ==============================
-          # SAVE PACKAGE NAME
-          # ==============================
-
-          with open(
-              "package_name.txt",
-              "w",
-              encoding="utf-8"
-          ) as f:
+          with open("package_name.txt", "w", encoding="utf-8") as f:
               f.write(package_name)
 
-
-          # ==============================
-          # CREATE ASSETS DIRECTORY
-          # ==============================
-
-          os.makedirs(
-              "app/src/main/assets",
-              exist_ok=True
-          )
-
-
-          # ==============================
-          # SAVE USER HTML
-          # ==============================
+          os.makedirs("app/src/main/assets", exist_ok=True)
 
           with open(
               "app/src/main/assets/index.html",
@@ -234,11 +136,6 @@ jobs:
               encoding="utf-8"
           ) as f:
               f.write(html_code)
-
-
-          # ==============================
-          # SHOW BUILD INFORMATION
-          # ==============================
 
           print("")
           print("================================")
@@ -248,25 +145,20 @@ jobs:
           print("Package:", package_name)
           print("HTML loaded successfully")
           print("================================")
-          print("")
-
           PY
 
 
-      # 6. Create Android project folders
+      # 5. Create Android folders
       - name: Create Android Project
         run: |
-          mkdir -p app/src/main/java/com/htmlhub/app
           mkdir -p app/src/main/res/values
-          mkdir -p app/src/main/assets
 
 
-      # 7. Gradle settings
+      # 6. Gradle settings
       - name: Create Gradle Settings
         run: |
 
           cat > settings.gradle <<'EOF'
-
           pluginManagement {
               repositories {
                   google()
@@ -289,43 +181,37 @@ jobs:
           rootProject.name = "HTMLHub"
 
           include ":app"
-
           EOF
 
 
-      # 8. Root build.gradle
+      # 7. Root Gradle
       - name: Create Root Gradle
         run: |
 
           cat > build.gradle <<'EOF'
-
           plugins {
               id 'com.android.application' version '8.6.1' apply false
           }
-
           EOF
 
 
-      # 9. App build.gradle
+      # 8. App Gradle
       - name: Create App Gradle
         run: |
 
           PACKAGE_NAME=$(cat package_name.txt)
 
           cat > app/build.gradle <<EOF
-
           plugins {
               id 'com.android.application'
           }
 
           android {
-
               namespace '${PACKAGE_NAME}'
 
               compileSdk 35
 
               defaultConfig {
-
                   applicationId '${PACKAGE_NAME}'
 
                   minSdk 23
@@ -335,15 +221,13 @@ jobs:
                   versionCode 1
 
                   versionName "1.0"
-
               }
           }
-
           EOF
 
 
-      # 10. Create MainActivity
-      - name: Create Java Activity
+      # 9. MainActivity
+      - name: Create MainActivity
         run: |
 
           PACKAGE_NAME=$(cat package_name.txt)
@@ -353,7 +237,6 @@ jobs:
           mkdir -p "app/src/main/java/$JAVA_PATH"
 
           cat > "app/src/main/java/$JAVA_PATH/MainActivity.java" <<EOF
-
           package ${PACKAGE_NAME};
 
           import android.app.Activity;
@@ -365,17 +248,13 @@ jobs:
           public class MainActivity extends Activity {
 
               @Override
-              protected void onCreate(
-                  Bundle savedInstanceState
-              ) {
+              protected void onCreate(Bundle savedInstanceState) {
 
                   super.onCreate(savedInstanceState);
 
-                  WebView webView =
-                      new WebView(this);
+                  WebView webView = new WebView(this);
 
-                  WebSettings settings =
-                      webView.getSettings();
+                  WebSettings settings = webView.getSettings();
 
                   // Enable JavaScript
                   settings.setJavaScriptEnabled(true);
@@ -388,25 +267,23 @@ jobs:
 
                   settings.setAllowContentAccess(true);
 
-                  // Open links inside WebView
+                  // Keep links inside WebView
                   webView.setWebViewClient(
                       new WebViewClient()
                   );
 
-                  // Load user's HTML
+                  // Load HTMLHub HTML
                   webView.loadUrl(
                       "file:///android_asset/index.html"
                   );
 
-                  // Display WebView
                   setContentView(webView);
               }
           }
-
           EOF
 
 
-      # 11. Android Manifest
+      # 10. Android Manifest
       - name: Create Android Manifest
         run: |
 
@@ -415,11 +292,9 @@ jobs:
           APP_NAME=$(cat app_name.txt)
 
           cat > app/src/main/AndroidManifest.xml <<EOF
-
           <manifest
               xmlns:android="http://schemas.android.com/apk/res/android">
 
-              <!-- Internet permission -->
               <uses-permission
                   android:name="android.permission.INTERNET" />
 
@@ -447,16 +322,14 @@ jobs:
               </application>
 
           </manifest>
-
           EOF
 
 
-      # 12. Android theme
+      # 11. Android Theme
       - name: Create Android Theme
         run: |
 
           cat > app/src/main/res/values/styles.xml <<'EOF'
-
           <resources>
 
               <style
@@ -478,11 +351,10 @@ jobs:
               </style>
 
           </resources>
-
           EOF
 
 
-      # 13. Download Gradle 8.7
+      # 12. Download Gradle 8.7
       - name: Download Gradle
         run: |
 
@@ -494,32 +366,42 @@ jobs:
           echo "$PWD/gradle-8.7/bin" >> $GITHUB_PATH
 
 
-      # 14. Build APK
+      # 13. Build APK
       - name: Build APK
         run: |
 
           gradle assembleDebug
 
 
-      # 15. Check APK
+      # 14. Check APK
       - name: Check APK
         run: |
+
           echo "APK files:"
-          ls -lh app/build/outputs/apk/debug/
+
+          ls -lh \
+            app/build/outputs/apk/debug/
 
 
-      # 16. Upload APK to Supabase Storage
+      # 15. Upload APK to Supabase Storage
       - name: Upload APK to Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BUILD_ID: ${{ inputs.build_id }}
         run: |
+
           APK="app/build/outputs/apk/debug/app-debug.apk"
+
           FILE_PATH="apk-files/${BUILD_ID}.apk"
 
-          echo "Uploading APK to Supabase..."
-          echo "Path: $FILE_PATH"
+          echo "================================"
+          echo "Uploading APK"
+          echo "================================"
+
+          echo "Path:"
+          echo "$FILE_PATH"
+
 
           HTTP_CODE=$(curl -sS \
             -o upload-response.txt \
@@ -531,8 +413,13 @@ jobs:
             --data-binary "@$APK" \
             "$SUPABASE_URL/storage/v1/object/$FILE_PATH")
 
-          echo "HTTP Status: $HTTP_CODE"
+
+          echo "HTTP Status:"
+          echo "$HTTP_CODE"
+
+          echo "Supabase response:"
           cat upload-response.txt
+
 
           if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
             echo "ERROR: APK upload failed"
@@ -542,42 +429,52 @@ jobs:
           echo "APK uploaded successfully!"
 
 
-      # 17. Create APK URL
+      # 16. Create APK URL
       - name: Create APK URL
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           BUILD_ID: ${{ inputs.build_id }}
         run: |
+
           APK_URL="$SUPABASE_URL/storage/v1/object/public/apk-files/$BUILD_ID.apk"
 
-          echo "APK URL:"
+          echo "================================"
+          echo "APK URL"
+          echo "================================"
+
           echo "$APK_URL"
 
           echo "$APK_URL" > apk_url.txt
 
 
-      # 18. Update builds table
+      # 17. Update builds table
       - name: Update Supabase Build
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BUILD_ID: ${{ inputs.build_id }}
         run: |
+
           APK_URL=$(cat apk_url.txt)
 
-          curl -sS \
+          echo "Updating Supabase build..."
+
+          RESPONSE=$(curl -sS \
+            -w "\n%{http_code}" \
             -X PATCH \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=minimal" \
             -d "{\"apk_url\":\"$APK_URL\",\"status\":\"completed\",\"completed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-            "$SUPABASE_URL/rest/v1/builds?id=eq.$BUILD_ID"
+            "$SUPABASE_URL/rest/v1/builds?id=eq.$BUILD_ID")
+
+          echo "$RESPONSE"
 
           echo "Database updated successfully!"
 
 
-      # 19. Upload APK artifact
+      # 18. Upload APK artifact
       - name: Upload APK
         uses: actions/upload-artifact@v6
         with:
